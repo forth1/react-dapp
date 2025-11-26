@@ -10,23 +10,29 @@ import { getBankContract } from "./utils/getBankContract";
 const HARDHAT_CHAIN_ID = 31337;
 const HARDHAT_CHAIN_HEX = "0x7a69";
 
-function App() {
+interface TxRecord {
+  type: "Deposit" | "Withdraw";
+  amount: string;
+  timestamp: string;
+}
+
+export default function App() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
 
-  const [bankBalance, setBankBalance] = useState<string>("0");
-  const [walletBalance, setWalletBalance] = useState<string>("0");
+  const [bankBalance, setBankBalance] = useState("0");
+  const [walletBalance, setWalletBalance] = useState("0");
+  const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
+  const [txHistory, setTxHistory] = useState<TxRecord[]>([]);
 
   const onHardhat = isConnected && chainId === HARDHAT_CHAIN_ID;
 
-  // Switch / Add Hardhat Network
+  // ============================
+  // Switch Hardhat Network
+  // ============================
   async function switchOrAddHardhat() {
     const anyWindow = window as any;
-    if (!anyWindow.ethereum) {
-      alert("Please install MetaMask / OKX Wallet / Binance Wallet first.");
-      return;
-    }
 
     try {
       await anyWindow.ethereum.request({
@@ -35,289 +41,310 @@ function App() {
       });
     } catch (switchError: any) {
       if (switchError?.code === 4902) {
-        try {
-          await anyWindow.ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [
-              {
-                chainId: HARDHAT_CHAIN_HEX,
-                chainName: "Localhost Hardhat",
-                nativeCurrency: { name: "Hardhat ETH", symbol: "ETH", decimals: 18 },
-                rpcUrls: ["http://127.0.0.1:8545/"],
-              },
-            ],
-          });
-        } catch (addError) {
-          console.error("Add Hardhat network failed:", addError);
-          alert("Failed to add Hardhat network. Check console for details.");
-        }
-      } else {
-        console.error("Switch Hardhat network failed:", switchError);
-        alert("Failed to switch Hardhat network. Check console.");
+        await anyWindow.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [
+            {
+              chainId: HARDHAT_CHAIN_HEX,
+              chainName: "Localhost Hardhat",
+              nativeCurrency: { name: "Hardhat ETH", symbol: "ETH", decimals: 18 },
+              rpcUrls: ["http://127.0.0.1:8545/"],
+            },
+          ],
+        });
       }
     }
   }
 
-  // Refresh Bank Balance + Wallet Balance
+  // ============================
+  // Refresh balance
+  // ============================
   async function refreshBalances() {
-    if (!onHardhat || !address) return;
-
-    try {
-      setLoading(true);
-
-      const { contract, provider } = await getBankContract();
-
-      const [bankBalRaw, walletBalRaw] = await Promise.all([
-        contract.balances(address),
-        provider.getBalance(address),
-      ]);
-
-      setBankBalance(ethers.utils.formatEther(bankBalRaw ?? 0));
-      setWalletBalance(ethers.utils.formatEther(walletBalRaw ?? 0));
-    } catch (e: any) {
-      console.error("Failed to refresh balances:", e);
-      alert(`Failed to refresh: ${e?.reason || e?.message || "Check console"}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Deposit 0.001 ETH
-  async function handleDeposit() {
-    if (!onHardhat) {
-      alert("Please connect wallet and switch to Localhost Hardhat.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const { contract } = await getBankContract();
-      const tx = await contract.deposit({
-        value: ethers.utils.parseEther("0.001"),
-      });
-      await tx.wait();
-      await refreshBalances();
-    } catch (e: any) {
-      console.error("Deposit failed:", e);
-      alert(`Deposit failed: ${e?.reason || e?.message}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Withdraw 0.001 ETH
-  async function handleWithdraw() {
-    if (!onHardhat) {
-      alert("Please connect wallet and switch to Localhost Hardhat.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const { contract } = await getBankContract();
-      const tx = await contract.withdraw(ethers.utils.parseEther("0.001"));
-      await tx.wait();
-      await refreshBalances();
-    } catch (e: any) {
-      console.error("Withdraw failed:", e);
-      alert(`Withdraw failed: ${e?.reason || e?.message}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Load balance when switching accounts or networks
-  useEffect(() => {
-    if (onHardhat && address) refreshBalances();
-  }, [onHardhat, address]);
-
-  // Listen for Deposit / Withdraw events
-  useEffect(() => {
     if (!address || !onHardhat) return;
 
-    let contractInstance: any;
+    setLoading(true);
+    const { contract, provider } = await getBankContract();
 
-    async function listenEvents() {
+    const [bankRaw, walletRaw] = await Promise.all([
+      contract.balances(address),
+      provider.getBalance(address),
+    ]);
+
+    setBankBalance(ethers.utils.formatEther(bankRaw));
+    setWalletBalance(ethers.utils.formatEther(walletRaw));
+    setLoading(false);
+  }
+
+  // ============================
+  // Add transaction history
+  // ============================
+  function addHistory(type: "Deposit" | "Withdraw", amt: string) {
+    setTxHistory((prev) => [
+      {
+        type,
+        amount: amt,
+        timestamp: new Date().toLocaleString(),
+      },
+      ...prev,
+    ]);
+  }
+
+  // ============================
+  // Deposit
+  // ============================
+  async function handleDeposit() {
+    if (!amount || Number(amount) <= 0) return alert("Enter valid amount");
+
+    setLoading(true);
+    const { contract } = await getBankContract();
+
+    const tx = await contract.deposit({
+      value: ethers.utils.parseEther(amount),
+    });
+
+    await tx.wait();
+    addHistory("Deposit", amount);
+    setAmount("");
+    refreshBalances();
+    setLoading(false);
+  }
+
+  // ============================
+  // Withdraw
+  // ============================
+  async function handleWithdraw() {
+    if (!amount || Number(amount) <= 0) return alert("Enter valid amount");
+
+    setLoading(true);
+    const { contract } = await getBankContract();
+
+    const tx = await contract.withdraw(ethers.utils.parseEther(amount));
+
+    await tx.wait();
+    addHistory("Withdraw", amount);
+    setAmount("");
+    refreshBalances();
+    setLoading(false);
+  }
+
+  // Auto-refresh
+  useEffect(() => {
+    if (address && onHardhat) refreshBalances();
+  }, [address, onHardhat]);
+
+  // ============================
+  // Listen contract events
+  // ============================
+  useEffect(() => {
+    if (!address || !onHardhat) return;
+    let instance: any;
+
+    async function listen() {
       const { contract } = await getBankContract();
-      contractInstance = contract;
+      instance = contract;
 
-      contract.on("Deposit", (user: string, amount: any) => {
+      contract.on("Deposit", (user, amt) => {
         if (user.toLowerCase() === address.toLowerCase()) {
-          console.log("Deposit Event Received");
+          const val = ethers.utils.formatEther(amt);
+          addHistory("Deposit", val);
           refreshBalances();
         }
       });
 
-      contract.on("Withdraw", (user: string, amount: any) => {
+      contract.on("Withdraw", (user, amt) => {
         if (user.toLowerCase() === address.toLowerCase()) {
-          console.log("Withdraw Event Received");
+          const val = ethers.utils.formatEther(amt);
+          addHistory("Withdraw", val);
           refreshBalances();
         }
       });
     }
 
-    listenEvents();
-
-    return () => {
-      if (contractInstance) {
-        contractInstance.removeAllListeners("Deposit");
-        contractInstance.removeAllListeners("Withdraw");
-      }
-    };
+    listen();
+    return () => instance?.removeAllListeners();
   }, [address, onHardhat]);
 
+  // ============================
+  // Main UI
+  // ============================
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        padding: "40px",
-        fontFamily: "system-ui, -apple-system, sans-serif",
-        background: "radial-gradient(circle at top left, #e0f2fe, #f5f5f5 40%, #e0e7ff)",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: "960px",
-          margin: "0 auto",
-          padding: "32px 32px 40px",
-          borderRadius: "24px",
-          backgroundColor: "rgba(255,255,255,0.9)",
-          boxShadow: "0 20px 40px rgba(0,0,0,0.12)",
-        }}
-      >
+    <div style={styles.page}>
+      <div style={styles.container}>
         {/* Header */}
-        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: "32px", fontWeight: 700 }}>Lesson 17: Bank DApp</h1>
-            <p style={{ marginTop: "8px", color: "#6b7280" }}>
-              Connect wallet with RainbowKit + wagmi and interact with a local Hardhat Bank contract.
-            </p >
-          </div>
+        <header style={styles.header}>
+          <h1 style={styles.title}>Lesson 17: Bank DApp</h1>
           <ConnectButton />
         </header>
 
-        {/* Switch Hardhat Network */}
-        <div style={{ marginBottom: "16px" }}>
-          <button
-            onClick={switchOrAddHardhat}
-            style={{
-              padding: "8px 16px",
-              borderRadius: "999px",
-              border: "none",
-              fontSize: "13px",
-              fontWeight: 500,
-              backgroundColor: "#111827",
-              color: "#fff",
-              cursor: "pointer",
+        <button onClick={switchOrAddHardhat} style={styles.switchBtn}>
+          Switch / Add Hardhat Network
+        </button>
+
+        {/* Status Section */}
+        <section style={styles.statusBox}>
+          <p><strong>Address:</strong> {address || "-"}</p >
+
+          <p>
+            <strong>Network:</strong>{" "}
+            <span style={{ color: onHardhat ? "green" : "red", fontWeight: 600 }}>
+              {onHardhat ? "Localhost Hardhat" : "Wrong Network"}
+            </span>
+          </p >
+
+          <p><strong>Wallet Balance:</strong> {walletBalance} ETH</p >
+        </section>
+
+        {/* Bank Balance */}
+        <section style={styles.balanceBox}>
+          <div style={styles.balanceLabel}>Your Bank Balance</div>
+          <div style={styles.balanceValue}>{bankBalance} ETH</div>
+        </section>
+
+        {/* Amount Input */}
+        <div style={{ marginTop: 20 }}>
+          <label style={styles.inputLabel}>Amount (ETH)</label>
+
+          <input
+            type="text"
+            value={amount}
+            placeholder="0.001"
+            inputMode="decimal"
+            onChange={(e) => {
+              const v = e.target.value;
+              if (/^[0-9]*\.?[0-9]*$/.test(v)) setAmount(v);
             }}
-          >
-            Switch / Add Hardhat Network
+            style={styles.input}
+          />
+        </div>
+
+        {/* Buttons */}
+        <div style={styles.btnRow}>
+          <button onClick={refreshBalances} style={styles.grayBtn}>
+            {loading ? "Loading..." : "Refresh Balance"}
+          </button>
+
+          <button onClick={handleDeposit} disabled={!onHardhat} style={styles.depositBtn}>
+            Deposit ETH
+          </button>
+
+          <button onClick={handleWithdraw} disabled={!onHardhat} style={styles.withdrawBtn}>
+            Withdraw ETH
           </button>
         </div>
 
-        {/* Status Bar */}
-        <div
-          style={{
-            padding: "12px 16px",
-            borderRadius: "12px",
-            backgroundColor: "#f9fafb",
-            marginBottom: "24px",
-            display: "flex",
-            justifyContent: "space-between",
-          }}
-        >
-          <div>
-            {isConnected ? (
-              <>
-                <div>Address: <span style={{ fontFamily: "monospace" }}>{address}</span></div>
-                <div style={{ marginTop: "6px" }}>
-                  Network:
-                  <span
-                    style={{
-                      marginLeft: "6px",
-                      padding: "2px 8px",
-                      borderRadius: "8px",
-                      backgroundColor: onHardhat ? "#dcfce7" : "#fee2e2",
-                      color: onHardhat ? "#166534" : "#b91c1c",
-                    }}
-                  >
-                    {onHardhat ? "Localhost Hardhat" : "Wrong Network"}
-                  </span>
-                </div>
-                <div style={{ marginTop: "6px" }}>Wallet Balance: {walletBalance} ETH</div>
-              </>
-            ) : (
-              <div>Please connect your wallet first.</div>
-            )}
-          </div>
-        </div>
+        {/* Transaction History */}
+        <h2 style={{ marginTop: 32 }}>Transaction History</h2>
 
-        {/* Bank Balance */}
-        <section>
-          <div
-            style={{
-              marginBottom: "16px",
-              padding: "16px 18px",
-              borderRadius: "16px",
-              backgroundColor: "#eef2ff",
-            }}
-          >
-            <div style={{ fontSize: "13px", marginBottom: "4px" }}>Your Bank Balance</div>
-            <div style={{ fontSize: "28px", fontWeight: 600 }}>{bankBalance} ETH</div>
-          </div>
-
-          <div style={{ display: "flex", gap: "12px" }}>
-            <button
-              onClick={refreshBalances}
-              disabled={loading || !onHardhat}
-              style={{
-                padding: "10px 18px",
-                borderRadius: "999px",
-                border: "none",
-                backgroundColor: "#e5e7eb",
-              }}
-            >
-              {loading ? "Loading..." : "Refresh Balance"}
-            </button>
-
-            <button
-              onClick={handleDeposit}
-              disabled={loading || !onHardhat}
-              style={{
-                padding: "10px 18px",
-                borderRadius: "999px",
-                border: "none",
-                background: "linear-gradient(135deg, #4f46e5, #6366f1, #ec4899)",
-                color: "#fff",
-              }}
-            >
-              Deposit 0.001 ETH
-            </button>
-
-            <button
-              onClick={handleWithdraw}
-              disabled={loading || !onHardhat}
-              style={{
-                padding: "10px 18px",
-                borderRadius: "999px",
-                border: "none",
-                backgroundColor: "#f97316",
-                color: "#111827",
-              }}
-            >
-              Withdraw 0.001 ETH
-            </button>
-          </div>
-
-          {!onHardhat && isConnected && (
-            <p style={{ marginTop: "12px", color: "#b91c1c" }}>
-              Please switch to Localhost Hardhat before depositing or withdrawing.
-            </p >
-          )}
-        </section>
+        {txHistory.length === 0 ? (
+          <p>No transactions yet.</p >
+        ) : (
+          txHistory.map((tx, i) => (
+            <div key={i} style={styles.txItem}>
+              <strong style={{ color: tx.type === "Deposit" ? "#4f46e5" : "#dc2626" }}>
+                {tx.type}
+              </strong>{" "}
+              {tx.amount} ETH
+              <div style={{ fontSize: 12, opacity: 0.7 }}>{tx.timestamp}</div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
 }
 
-export default App;
+// =========================
+// UI Styles
+// =========================
+const styles: any = {
+  page: {
+    minHeight: "100vh",
+    padding: 40,
+    background: "#f1f5f9",
+    fontFamily: "Inter, system-ui",
+  },
+  container: {
+    maxWidth: 900,
+    margin: "0 auto",
+    background: "white",
+    padding: 32,
+    borderRadius: 20,
+    boxShadow: "0 6px 20px rgba(0,0,0,0.1)",
+  },
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  title: {
+    fontSize: 28,
+    margin: 0,
+  },
+  switchBtn: {
+    marginTop: 10,
+    padding: "8px 16px",
+    background: "#111827",
+    color: "white",
+    border: "none",
+    borderRadius: 10,
+    cursor: "pointer",
+  },
+  statusBox: {
+    marginTop: 24,
+    background: "#f8fafc",
+    padding: 16,
+    borderRadius: 12,
+  },
+  balanceBox: {
+    marginTop: 24,
+    background: "#eef2ff",
+    padding: 20,
+    borderRadius: 16,
+  },
+  balanceLabel: { fontSize: 14, color: "#4b5563" },
+  balanceValue: { fontSize: 32, fontWeight: 700 },
+
+  inputLabel: { display: "block", marginBottom: 6, fontWeight: 500 },
+
+  input: {
+    width: "100%",
+    padding: 12,
+    borderRadius: 10,
+    border: "1px solid #cbd5e1",
+    outline: "none",
+    fontSize: 16,
+  },
+
+  btnRow: {
+    display: "flex",
+    gap: 12,
+    marginTop: 16,
+  },
+  grayBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 10,
+    border: "none",
+    background: "#e5e7eb",
+  },
+  depositBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 10,
+    border: "none",
+    background: "#4f46e5",
+    color: "white",
+  },
+  withdrawBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 10,
+    border: "none",
+    background: "#f97316",
+    color: "white",
+  },
+  txItem: {
+    padding: "12px 0",
+    borderBottom: "1px solid #e2e8f0",
+  },
+};
