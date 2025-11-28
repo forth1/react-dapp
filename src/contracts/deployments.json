@@ -1,5 +1,7 @@
 {
-  "Lesson8_EventsBank": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-  "network": "localhost",
-  "updatedAt": "2025-11-25T00:38:17.568Z"
+  "Bank": {
+    "address": "0x4310EC84c0D4Bc75D0B3928225790264592acbaC",
+    "network": "sepolia",
+    "updatedAt": "2025-11-29T00:00:00.000Z"
+  }
 }

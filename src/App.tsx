@@ -7,17 +7,18 @@ import { useAccount, useChainId } from "wagmi";
 
 import { getBankContract } from "./utils/getBankContract";
 
-const HARDHAT_CHAIN_ID = 31337;
-const HARDHAT_CHAIN_HEX = "0x7a69";
+// ====== 使用 Sepolia ======
+const SEPOLIA_CHAIN_ID = 11155111;
+const SEPOLIA_CHAIN_HEX = "0xaa36a7";
 
 type TxType = "Deposit" | "Withdraw";
 
 interface TxRecord {
-  id: string;          // 唯一 id（用于 React key）
+  id: string; // 唯一 id（用于 React key）
   type: TxType;
-  amount: string;      // ETH 字符串
-  timestamp: string;   // 本地时间
-  txHash: string;      // 交易哈希
+  amount: string; // ETH 字符串
+  timestamp: string; // 本地时间
+  txHash: string; // 交易哈希
 }
 
 function App() {
@@ -26,7 +27,7 @@ function App() {
 
   const [bankBalance, setBankBalance] = useState("0");
   const [walletBalance, setWalletBalance] = useState("0");
-  const [amount, setAmount] = useState(""); // 输入框：默认空
+  const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
 
   const [txHistory, setTxHistory] = useState<TxRecord[]>([]);
@@ -38,10 +39,11 @@ function App() {
   // 记录已经处理过的事件，避免重复（根据 type + txHash）
   const seenEventsRef = useRef<Set<string>>(new Set());
 
-  const onHardhat = isConnected && chainId === HARDHAT_CHAIN_ID;
+  // 当前是否在 Sepolia 上
+  const onSepolia = isConnected && chainId === SEPOLIA_CHAIN_ID;
 
-  // ---------------- 网络切换 ----------------
-  async function switchOrAddHardhat() {
+  // ---------------- 网络切换：切到 Sepolia ----------------
+  async function switchOrAddSepolia() {
     const anyWindow = window as any;
     if (!anyWindow.ethereum) {
       alert("Please install MetaMask / OKX Wallet / Binance Wallet.");
@@ -51,40 +53,41 @@ function App() {
     try {
       await anyWindow.ethereum.request({
         method: "wallet_switchEthereumChain",
-        params: [{ chainId: HARDHAT_CHAIN_HEX }],
+        params: [{ chainId: SEPOLIA_CHAIN_HEX }],
       });
     } catch (switchError: any) {
+      // 钱包里还没有 Sepolia 的时候，可以尝试添加
       if (switchError?.code === 4902) {
         try {
           await anyWindow.ethereum.request({
             method: "wallet_addEthereumChain",
             params: [
               {
-                chainId: HARDHAT_CHAIN_HEX,
-                chainName: "Localhost Hardhat",
+                chainId: SEPOLIA_CHAIN_HEX,
+                chainName: "Sepolia Testnet",
                 nativeCurrency: {
-                  name: "Hardhat ETH",
+                  name: "Sepolia ETH",
                   symbol: "ETH",
                   decimals: 18,
                 },
-                rpcUrls: ["http://127.0.0.1:8545/"],
+                rpcUrls: ["https://rpc.sepolia.org"],
               },
             ],
           });
         } catch (addError) {
-          console.error("Add Hardhat network failed:", addError);
-          alert("Failed to add Hardhat network. Check console.");
+          console.error("Add Sepolia network failed:", addError);
+          alert("Failed to add Sepolia network. Check console.");
         }
       } else {
-        console.error("Switch Hardhat network failed:", switchError);
-        alert("Failed to switch Hardhat network. Check console.");
+        console.error("Switch Sepolia network failed:", switchError);
+        alert("Failed to switch to Sepolia. Check console.");
       }
     }
   }
 
   // ---------------- 刷新余额 ----------------
   async function refreshBalances() {
-    if (!onHardhat || !address) return;
+    if (!onSepolia || !address) return;
 
     try {
       setLoading(true);
@@ -105,13 +108,10 @@ function App() {
     }
   }
 
-  // ---------------- 记录交易（只在事件里调用） ----------------
+  // ---------------- 记录交易（事件里调用） ----------------
   function addHistory(type: TxType, amountEth: string, txHash: string) {
     const key = `${type}-${txHash}`;
-    if (seenEventsRef.current.has(key)) {
-      // 已经记录过了，跳过
-      return;
-    }
+    if (seenEventsRef.current.has(key)) return;
     seenEventsRef.current.add(key);
 
     setTxHistory((prev) => [
@@ -128,8 +128,8 @@ function App() {
 
   // ---------------- 存款 ----------------
   async function handleDeposit() {
-    if (!onHardhat) {
-      alert("Please connect wallet and switch to Localhost Hardhat.");
+    if (!onSepolia) {
+      alert("Please connect wallet and switch to Sepolia Testnet.");
       return;
     }
     if (!amount || Number(amount) <= 0) {
@@ -144,7 +144,6 @@ function App() {
         value: ethers.utils.parseEther(amount),
       });
       await tx.wait();
-      // 交易记录 & 余额更新交给事件监听器来做
       setAmount("");
     } catch (e: any) {
       console.error("Deposit failed:", e);
@@ -156,8 +155,8 @@ function App() {
 
   // ---------------- 取款 ----------------
   async function handleWithdraw() {
-    if (!onHardhat) {
-      alert("Please connect wallet and switch to Localhost Hardhat.");
+    if (!onSepolia) {
+      alert("Please connect wallet and switch to Sepolia Testnet.");
       return;
     }
     if (!amount || Number(amount) <= 0) {
@@ -170,7 +169,6 @@ function App() {
       const { contract } = await getBankContract();
       const tx = await contract.withdraw(ethers.utils.parseEther(amount));
       await tx.wait();
-      // 同样交给事件监听器
       setAmount("");
     } catch (e: any) {
       console.error("Withdraw failed:", e);
@@ -180,19 +178,43 @@ function App() {
     }
   }
 
+  // ---------------- 调试：直接读取合约里的余额 ----------------
+  async function debugCheckBalance() {
+    try {
+      if (!onSepolia) {
+        alert("请先切到 Sepolia 网络，再调试余额。");
+        return;
+      }
+      if (!address) {
+        alert("请先连接钱包。");
+        return;
+      }
+
+      const { contract } = await getBankContract();
+      const bal = await contract.balances(address);
+      const eth = ethers.utils.formatEther(bal ?? 0);
+
+      console.log("Debug bank.balances(address) =", bal.toString(), `${eth} ETH`);
+      alert(`Debug: bank.balances(${address.slice(0, 6)}...) = ${eth} ETH`);
+    } catch (e: any) {
+      console.error("Debug check balance failed:", e);
+      alert(`Debug failed: ${e?.message || String(e)}`);
+    }
+  }
+
   // ---------------- 自动刷新余额 ----------------
   useEffect(() => {
-    if (onHardhat && address) {
+    if (onSepolia && address) {
       refreshBalances();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onHardhat, address]);
+  }, [onSepolia, address]);
 
-  // ---------------- 区块 + 事件 监听 ----------------
+  // ---------------- 区块 + 事件监听 ----------------
   useEffect(() => {
-    if (!address || !onHardhat || !liveEvents) return;
+    if (!address || !onSepolia || !liveEvents) return;
 
-    let contractInstance: any;
+    let contractInstance: ethers.Contract | null = null;
     let providerInstance: ethers.providers.Provider | null = null;
 
     async function setupListeners() {
@@ -200,53 +222,41 @@ function App() {
       contractInstance = contract;
       providerInstance = provider;
 
-      // 新区块监听
       provider.on("block", (blockNumber: number) => {
         setLastBlock(blockNumber);
         console.log("🧱 New Block:", blockNumber);
       });
 
-      // Deposit 事件
-      contract.on(
-        "Deposit",
-        (user: string, rawAmount: any, event: any) => {
-          if (user.toLowerCase() !== address.toLowerCase()) return;
-          const formatted = ethers.utils.formatEther(rawAmount);
-          const txHash = event?.transactionHash ?? "unknown";
-          addHistory("Deposit", formatted, txHash);
-          refreshBalances();
-        }
-      );
+      contract.on("Deposit", (user: string, rawAmount: any, event: any) => {
+        if (user.toLowerCase() !== address.toLowerCase()) return;
+        const formatted = ethers.utils.formatEther(rawAmount);
+        const txHash = event?.transactionHash ?? "unknown";
+        addHistory("Deposit", formatted, txHash);
+        refreshBalances();
+      });
 
-      // Withdraw 事件
-      contract.on(
-        "Withdraw",
-        (user: string, rawAmount: any, event: any) => {
-          if (user.toLowerCase() !== address.toLowerCase()) return;
-          const formatted = ethers.utils.formatEther(rawAmount);
-          const txHash = event?.transactionHash ?? "unknown";
-          addHistory("Withdraw", formatted, txHash);
-          refreshBalances();
-        }
-      );
+      contract.on("Withdraw", (user: string, rawAmount: any, event: any) => {
+        if (user.toLowerCase() !== address.toLowerCase()) return;
+        const formatted = ethers.utils.formatEther(rawAmount);
+        const txHash = event?.transactionHash ?? "unknown";
+        addHistory("Withdraw", formatted, txHash);
+        refreshBalances();
+      });
     }
 
     setupListeners();
 
     return () => {
-      // 清理监听器
-      if (providerInstance) {
-        providerInstance.removeAllListeners("block");
-      }
+      if (providerInstance) providerInstance.removeAllListeners("block");
       if (contractInstance) {
         contractInstance.removeAllListeners("Deposit");
         contractInstance.removeAllListeners("Withdraw");
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, onHardhat, liveEvents]);
+  }, [address, onSepolia, liveEvents]);
 
-  // ---------------- 过滤后的交易列表 ----------------
+  // ---------------- 过滤交易列表 ----------------
   const filteredTx = txHistory.filter((tx) => {
     if (filter === "deposit") return tx.type === "Deposit";
     if (filter === "withdraw") return tx.type === "Withdraw";
@@ -277,7 +287,7 @@ function App() {
         <div
           style={{
             backgroundColor: "rgba(255,255,255,0.96)",
-            borderRadius: "24px",
+            borderRadius: 24,
             padding: "24px 28px 28px",
             boxShadow:
               "0 22px 45px rgba(15,23,42,0.14), 0 0 0 1px rgba(148,163,184,0.25)",
@@ -289,70 +299,70 @@ function App() {
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              marginBottom: "16px",
+              marginBottom: 16,
             }}
           >
             <div>
               <div
                 style={{
-                  fontSize: "13px",
+                  fontSize: 13,
                   textTransform: "uppercase",
                   letterSpacing: "0.16em",
                   color: "#9ca3af",
-                  marginBottom: "4px",
+                  marginBottom: 4,
                 }}
               >
-                RainbowKit · wagmi · Hardhat
+                RainbowKit · wagmi · Sepolia
               </div>
               <h1
                 style={{
                   margin: 0,
-                  fontSize: "28px",
+                  fontSize: 28,
                   fontWeight: 800,
                   letterSpacing: "-0.04em",
                 }}
               >
-                Lesson 21 · Bank DApp
+                Lesson 22 · Bank DApp (Sepolia)
               </h1>
-              <p style={{ marginTop: "6px", fontSize: "13px", color: "#6b7280" }}>
+              <p style={{ marginTop: 6, fontSize: 13, color: "#6b7280" }}>
                 Live events · New blocks · Transaction history.
               </p>
             </div>
             <ConnectButton />
           </header>
 
-          {/* 网络切换 + Live toggle */}
+          {/* 网络切换 + Live toggle + Debug */}
           <div
             style={{
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              marginBottom: "12px",
-              gap: "12px",
+              marginBottom: 12,
+              gap: 12,
             }}
           >
             <button
-              onClick={switchOrAddHardhat}
+              onClick={switchOrAddSepolia}
               style={{
                 padding: "8px 16px",
-                borderRadius: "999px",
+                borderRadius: 999,
                 border: "none",
-                fontSize: "13px",
+                fontSize: 13,
                 fontWeight: 500,
                 backgroundColor: "#111827",
                 color: "#f9fafb",
                 cursor: "pointer",
               }}
             >
-              Switch / Add Hardhat Network
+              Switch / Add Sepolia Network
             </button>
 
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "8px",
-                fontSize: "12px",
+                gap: 8,
+                fontSize: 12,
                 color: "#6b7280",
               }}
             >
@@ -360,7 +370,7 @@ function App() {
                 style={{
                   width: 8,
                   height: 8,
-                  borderRadius: "999px",
+                  borderRadius: 999,
                   backgroundColor: liveEvents ? "#22c55e" : "#9ca3af",
                 }}
               />
@@ -377,14 +387,27 @@ function App() {
                 onClick={() => setLiveEvents((v) => !v)}
                 style={{
                   padding: "4px 10px",
-                  borderRadius: "999px",
+                  borderRadius: 999,
                   border: "1px solid #e5e7eb",
                   backgroundColor: "#f9fafb",
                   cursor: "pointer",
-                  fontSize: "11px",
+                  fontSize: 11,
                 }}
               >
                 {liveEvents ? "Pause" : "Resume"}
+              </button>
+              <button
+                onClick={debugCheckBalance}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #e5e7eb",
+                  backgroundColor: "#eef2ff",
+                  cursor: "pointer",
+                  fontSize: 11,
+                }}
+              >
+                Debug Balance
               </button>
             </div>
           </div>
@@ -393,10 +416,10 @@ function App() {
           <div
             style={{
               padding: "12px 14px",
-              borderRadius: "14px",
+              borderRadius: 14,
               backgroundColor: "#f9fafb",
-              marginBottom: "18px",
-              fontSize: "13px",
+              marginBottom: 18,
+              fontSize: 13,
               lineHeight: 1.6,
             }}
           >
@@ -411,35 +434,34 @@ function App() {
               <span
                 style={{
                   padding: "2px 8px",
-                  borderRadius: "999px",
-                  backgroundColor: onHardhat ? "#dcfce7" : "#fee2e2",
-                  color: onHardhat ? "#166534" : "#b91c1c",
-                  fontSize: "12px",
+                  borderRadius: 999,
+                  backgroundColor: onSepolia ? "#dcfce7" : "#fee2e2",
+                  color: onSepolia ? "#166534" : "#b91c1c",
+                  fontSize: 12,
                   marginLeft: 4,
                 }}
               >
-                {onHardhat ? "Localhost Hardhat" : "Wrong Network"}
+                {onSepolia ? "Sepolia Testnet" : "Wrong Network"}
               </span>
             </div>
             <div>
-              Wallet Balance:{" "}
-              <strong>{walletBalance}</strong> ETH
+              Wallet Balance: <strong>{walletBalance}</strong> ETH
             </div>
           </div>
 
           {/* 银行余额 */}
           <section
             style={{
-              marginBottom: "18px",
+              marginBottom: 18,
               padding: "18px 20px",
-              borderRadius: "18px",
+              borderRadius: 18,
               background:
                 "linear-gradient(135deg, rgba(129,140,248,0.06), rgba(56,189,248,0.08))",
             }}
           >
             <div
               style={{
-                fontSize: "13px",
+                fontSize: 13,
                 color: "#4b5563",
                 marginBottom: 4,
               }}
@@ -448,7 +470,7 @@ function App() {
             </div>
             <div
               style={{
-                fontSize: "30px",
+                fontSize: 30,
                 fontWeight: 700,
                 letterSpacing: "-0.04em",
               }}
@@ -465,7 +487,7 @@ function App() {
             <div
               style={{
                 display: "flex",
-                gap: "12px",
+                gap: 12,
                 alignItems: "center",
                 marginBottom: 14,
               }}
@@ -477,55 +499,52 @@ function App() {
                 value={amount}
                 onChange={(e) => {
                   const v = e.target.value;
-                  // 允许空字符串，或者合法数字
-                  if (v === "" || /^-?\d*\.?\d*$/.test(v)) {
-                    setAmount(v);
-                  }
+                  if (v === "" || /^-?\d*\.?\d*$/.test(v)) setAmount(v);
                 }}
                 placeholder="Enter amount, e.g. 0.001"
                 style={{
                   flex: 1,
                   padding: "10px 12px",
-                  borderRadius: "999px",
+                  borderRadius: 999,
                   border: "1px solid #d1d5db",
-                  fontSize: "14px",
+                  fontSize: 14,
                   outline: "none",
                 }}
               />
 
               <button
                 onClick={refreshBalances}
-                disabled={loading || !onHardhat}
+                disabled={loading || !onSepolia}
                 style={{
                   padding: "10px 18px",
-                  borderRadius: "999px",
+                  borderRadius: 999,
                   border: "none",
-                  fontSize: "14px",
+                  fontSize: 14,
                   backgroundColor: "#e5e7eb",
                   cursor:
-                    loading || !onHardhat ? "not-allowed" : "pointer",
+                    loading || !onSepolia ? "not-allowed" : "pointer",
                 }}
               >
                 {loading ? "…" : "Refresh"}
               </button>
             </div>
 
-            <div style={{ display: "flex", gap: "12px" }}>
+            <div style={{ display: "flex", gap: 12 }}>
               <button
                 onClick={handleDeposit}
-                disabled={loading || !onHardhat}
+                disabled={loading || !onSepolia}
                 style={{
                   flex: 1,
                   padding: "12px 0",
-                  borderRadius: "999px",
+                  borderRadius: 999,
                   border: "none",
-                  fontSize: "14px",
+                  fontSize: 14,
                   fontWeight: 500,
                   background:
                     "linear-gradient(135deg, #4f46e5, #6366f1, #ec4899)",
                   color: "#f9fafb",
                   cursor:
-                    loading || !onHardhat ? "not-allowed" : "pointer",
+                    loading || !onSepolia ? "not-allowed" : "pointer",
                 }}
               >
                 Deposit
@@ -533,18 +552,18 @@ function App() {
 
               <button
                 onClick={handleWithdraw}
-                disabled={loading || !onHardhat}
+                disabled={loading || !onSepolia}
                 style={{
                   flex: 1,
                   padding: "12px 0",
-                  borderRadius: "999px",
+                  borderRadius: 999,
                   border: "none",
-                  fontSize: "14px",
+                  fontSize: 14,
                   fontWeight: 500,
                   backgroundColor: "#f97316",
                   color: "#111827",
                   cursor:
-                    loading || !onHardhat ? "not-allowed" : "pointer",
+                    loading || !onSepolia ? "not-allowed" : "pointer",
                 }}
               >
                 Withdraw
@@ -557,7 +576,7 @@ function App() {
         <div
           style={{
             backgroundColor: "rgba(255,255,255,0.96)",
-            borderRadius: "24px",
+            borderRadius: 24,
             padding: "20px 22px 22px",
             boxShadow:
               "0 22px 45px rgba(15,23,42,0.12), 0 0 0 1px rgba(148,163,184,0.25)",
@@ -602,7 +621,7 @@ function App() {
               display: "inline-flex",
               alignSelf: "flex-start",
               padding: 2,
-              borderRadius: "999px",
+              borderRadius: 999,
               backgroundColor: "#f3f4f6",
               marginBottom: 10,
               fontSize: 12,
@@ -622,7 +641,7 @@ function App() {
                   }
                   style={{
                     border: "none",
-                    borderRadius: "999px",
+                    borderRadius: 999,
                     padding: "4px 10px",
                     cursor: "pointer",
                     backgroundColor: active ? "#ffffff" : "transparent",
@@ -664,7 +683,7 @@ function App() {
             ) : (
               <div
                 style={{
-                  maxHeight: "460px",
+                  maxHeight: 460,
                   overflowY: "auto",
                 }}
               >

@@ -10,15 +10,14 @@ import {
 import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { localhost } from "./chains";  // ✅ 这里就能正确拿到 localhost 了
+import { sepoliaChain } from "./chains";
 import App from "./App";
 import "./index.css";
 
-// 本地开发，projectId 随便写一个字符串即可
 const config = getDefaultConfig({
-  appName: "Lesson 17 Bank DApp",
-  projectId: "demo-project-id",
-  chains: [localhost],
+  appName: "Lesson 22 Bank DApp (Sepolia)",
+  projectId: "demo-project-id", // 本地开发，随便写
+  chains: [sepoliaChain],
   ssr: false,
 });
 
@@ -28,6 +27,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
+        {/* 不用再手动传 chains，默认用上面 config 里的 */}
         <RainbowKitProvider>
           <App />
         </RainbowKitProvider>
